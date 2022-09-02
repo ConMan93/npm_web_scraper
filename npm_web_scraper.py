@@ -1,12 +1,15 @@
 # Author: Connor Hoffman 001345531 & Gerardo Monterroza
 
+from subprocess import DEVNULL, STDOUT, CalledProcessError, check_call
 import pymsteams
+import argparse
 import requests
 import tarfile
 import shutil
 import yara
 import bs4
 import sys
+import stat
 import os
 
 WEBHOOK_URL = 'https://westerngovernorsuniversity.webhook.office.com/webhookb2/8c7994c4-d96f-4b42-a8db-63f8ab84d9c9@cfa792cf-7768-4341-8857-81754c2afa1f/IncomingWebhook/176366163f164c0c87d31cb389e0f6d5/5091c999-0734-4e37-a913-b9dca36decbd'
@@ -28,9 +31,39 @@ def get_new_package_names():
         k += 1
     return npm_package_names
 
+def get_new_package_names_mode2():
+    k = 1
+    while(k < 100):
+        res = requests.get('https://libraries.io/search?order=desc&platforms=npm&sort=created_at&page='+str(k))
+        soup = bs4.BeautifulSoup(res.text, 'html.parser')
+        i = 4 # Based on the set up of the webpage, this is the first package in the list
+        while(i < 34):
+            css_selector = 'body > div.container > div.row > div.col-sm-8 > div:nth-child('+str(i)+') > h5 > a'
+            more_soup = soup.select(css_selector)[0]
+            package = more_soup.contents[0]
+            # soup_urls = more_soup.attrs['href'] in case we want the links to the packages
+            download_package(package)
+            extract_packages()
+            check_yara_rules_for_each()
+            clean_up()
+            i += 1
+        k += 1
+
 def download_packages(package_names):
     for package in package_names:
         os.system('npm pack ' + package + ' --pack-destination .' + dir_separator + 'npm_packages' + dir_separator)
+
+def download_package(package_name):
+    print("[*] Downloading " + package_name + '!')
+    if mute:
+        try:
+            check_call(['npm', 'pack', package_name, '--pack-destination', '.' +  dir_separator + 'npm_packages' + dir_separator], stdout=DEVNULL, stderr=STDOUT)
+        except CalledProcessError:
+            print("[!] Error downloading " + package_name)
+            pass
+    else:
+        check_call(['npm', 'pack', package_name, '--pack-destination', '.' + dir_separator + 'npm_packages' + dir_separator])
+        
 
 def extract_packages():
     files = os.listdir(current_working_directory + dir_separator + 'npm_packages' + dir_separator)
@@ -56,17 +89,10 @@ def load_yara_rules():
     return yara_rules_dict
 
 def check_yara_rules():
-    yara_rules = load_yara_rules() # load YARA rules for compiling
-
-    print("\n\nLoaded YARA rules:")
-    for y, r in yara_rules.items():
-        print(y)
-
     for (dirpath, dirname, filenames) in os.walk(current_working_directory + dir_separator + 'extracted_packages'):
         if filenames:
             for filename in filenames:
-                rules = yara.compile(sources=yara_rules)
-                yara_matches = rules.match(dirpath + dir_separator + filename) 
+                yara_matches = yara_rules_compiled.match(dirpath + dir_separator + filename) 
                 if yara_matches:
                     package_name = dirpath.split(dir_separator)[7]
                     # create_card(package_name, filename, yara_matches)
@@ -75,6 +101,32 @@ def check_yara_rules():
                     except:
                         os.mkdir(current_working_directory + dir_separator + 'potentially_malicious' + dir_separator + package_name)
                         shutil.move(dirpath + dir_separator + filename, current_working_directory + dir_separator + 'potentially_malicious' + dir_separator + package_name + dir_separator + filename)
+
+def check_yara_rules_for_each():
+    # TODO: fix permissions error
+    for (dirpath, dirname, filenames) in os.walk(current_working_directory + dir_separator + 'extracted_packages'):
+        if filenames:
+            for filename in filenames:
+                try:
+                    yara_matches = yara_rules_compiled.match(dirpath + dir_separator + filename)
+                    package_name = dirpath.split(dir_separator)[7]
+                    new_dir = dirpath + dir_separator + filename, current_working_directory + dir_separator + 'potentially_malicious' + dir_separator + package_name + dir_separator + filename 
+                    if yara_matches:
+                        positive_alert(new_dir, package_name)
+                except yara.Error:
+                    print("[!] Permissions error! Not even bothering.")
+                    # os.chmod(dirpath + dir_separator + filename, stat.S_IRWXU)
+                    # if yara_matches:
+                    #    positive_alert(new_dir, package_name)
+
+def positive_alert(dir, name):
+    print("Something funny!")
+    # create_card(package_name, filename, yara_matches)
+    try:
+        shutil.move(dir)
+    except:
+        os.mkdir(current_working_directory + dir_separator + 'potentially_malicious' + dir_separator + name)
+        shutil.move(dir)
 
 def clean_up():
     for (dirpath, dirname, filenames) in os.walk(current_working_directory + dir_separator + 'npm_packages'):
@@ -94,13 +146,28 @@ def check_OS(sys_platform):
 
 
 def main():
-    package_names = get_new_package_names()
-    download_packages(package_names)
-    extract_packages()
-    check_yara_rules()
-    # clean_up()
+    if switch == 2:
+        get_new_package_names_mode2()
+    else:
+        #package_names = get_new_package_names()
+        # download_packages(package_names)
+        extract_packages()
+        check_yara_rules()
+        #clean_up()
+
+    
 
 if __name__ == '__main__':
     current_working_directory = os.getcwd()
     dir_separator = check_OS(sys.platform)
+    yara_rules = load_yara_rules()
+    yara_rules_compiled = yara.compile(sources=yara_rules) # load YARA rules for compiling
+    switch = 2
+    mute = True
+
+    print("\n\nLoaded YARA rules:")
+    for y, r in yara_rules.items():
+        print(y)
+    print()
+
     main()
