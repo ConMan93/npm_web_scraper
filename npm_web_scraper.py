@@ -1,18 +1,34 @@
 # Author: Connor Hoffman 001345531 & Gerardo Monterroza
 
-from subprocess import DEVNULL, STDOUT, CalledProcessError, check_call
+from subprocess import DEVNULL, PIPE, STDOUT, CalledProcessError, run
+from colorama import Fore, Back
 import pymsteams
+import colorama
 import argparse
 import requests
 import tarfile
 import shutil
 import yara
-import bs4
+import bs4 
 import sys
-import stat
 import os
 
 WEBHOOK_URL = 'https://westerngovernorsuniversity.webhook.office.com/webhookb2/8c7994c4-d96f-4b42-a8db-63f8ab84d9c9@cfa792cf-7768-4341-8857-81754c2afa1f/IncomingWebhook/176366163f164c0c87d31cb389e0f6d5/5091c999-0734-4e37-a913-b9dca36decbd'
+
+def oss_gadget_analyze(package_name):
+    print(Back.GREEN + "[*] Analyzing " + package_name)
+    package_dir = package_name
+
+    if package_name[0] == '@':
+            package_name = package_name.replace('@', "%40")
+            package_name = package_name.replace('/', "%2F")
+
+    if quiet:
+            out = run([OSS_gadget_dir + 'oss-defog', '--download-directory', '.' + dir_separator + 'npm_packages/' + package_dir, '--use-cache', 'pkg:npm/' + package_name, '--save-found-binaries-to', '.', dir_separator, 'potentially_malicious'], stdout=PIPE, stderr=DEVNULL).stdout.splitlines()
+            for i in out:
+                print(i.decode())
+    else:
+            run([OSS_gadget_dir + 'oss-defog', '--download-directory', '.' + dir_separator + 'npm_packages/' + package_dir, '--use-cache', 'pkg:npm/' + package_name, '--save-found-binaries-to', '.', dir_separator, 'potentially_malicious'])
 
 def get_new_package_names():
     npm_package_names = []
@@ -21,7 +37,7 @@ def get_new_package_names():
         res = requests.get('https://libraries.io/search?order=desc&platforms=npm&sort=created_at&page='+str(k))
         soup = bs4.BeautifulSoup(res.text, 'html.parser')
         i = 4 # Based on the set up of the webpage, this is the first package in the list
-        while(i < 34):
+        while(i < 2):
             css_selector = 'body > div.container > div.row > div.col-sm-8 > div:nth-child('+str(i)+') > h5 > a'
             more_soup = soup.select(css_selector)[0]
             soup_content = more_soup.contents[0]
@@ -42,10 +58,11 @@ def get_new_package_names_mode2():
             more_soup = soup.select(css_selector)[0]
             package = more_soup.contents[0]
             # soup_urls = more_soup.attrs['href'] in case we want the links to the packages
-            download_package(package)
-            extract_packages()
-            check_yara_rules_for_each()
-            clean_up()
+            if package:
+                oss_gadget_analyze(package)
+                #extract_packages()
+                #check_yara_rules_for_each()
+                #clean_up()
             i += 1
         k += 1
 
@@ -55,14 +72,20 @@ def download_packages(package_names):
 
 def download_package(package_name):
     print("[*] Downloading " + package_name + '!')
-    if mute:
+    if quiet:
         try:
-            check_call(['npm', 'pack', package_name, '--pack-destination', '.' +  dir_separator + 'npm_packages' + dir_separator], stdout=DEVNULL, stderr=STDOUT)
+            run(['npm', 'pack', package_name, '--pack-destination', '.' +  dir_separator + 'npm_packages' + dir_separator], stdout=DEVNULL, stderr=STDOUT)
+            return True
         except CalledProcessError:
             print("[!] Error downloading " + package_name)
-            pass
+            return False
     else:
-        check_call(['npm', 'pack', package_name, '--pack-destination', '.' + dir_separator + 'npm_packages' + dir_separator])
+        try:
+            run(['npm', 'pack', package_name, '--pack-destination', '.' +  dir_separator + 'npm_packages' + dir_separator])
+            return True
+        except CalledProcessError:
+            print("[!] Error downloading " + package_name)
+            return False
         
 
 def extract_packages():
@@ -158,12 +181,15 @@ def main():
     
 
 if __name__ == '__main__':
+    
     current_working_directory = os.getcwd()
     dir_separator = check_OS(sys.platform)
+    colorama.init(autoreset=True)
     yara_rules = load_yara_rules()
     yara_rules_compiled = yara.compile(sources=yara_rules) # load YARA rules for compiling
+    OSS_gadget_dir = '..' + dir_separator + 'OSSGadget' + dir_separator
     switch = 2
-    mute = True
+    quiet = True
 
     print("\n\nLoaded YARA rules:")
     for y, r in yara_rules.items():
