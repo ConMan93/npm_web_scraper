@@ -1,6 +1,6 @@
 # Author: Connor Hoffman 001345531 & Gerardo Monterroza
 
-from subprocess import DEVNULL, PIPE, STDOUT, CalledProcessError, run
+from subprocess import DEVNULL, PIPE, STDOUT, CalledProcessError, TimeoutExpired, run
 from colorama import Fore, Back
 import pymsteams
 import colorama
@@ -15,8 +15,11 @@ import os
 
 WEBHOOK_URL = 'https://westerngovernorsuniversity.webhook.office.com/webhookb2/8c7994c4-d96f-4b42-a8db-63f8ab84d9c9@cfa792cf-7768-4341-8857-81754c2afa1f/IncomingWebhook/176366163f164c0c87d31cb389e0f6d5/5091c999-0734-4e37-a913-b9dca36decbd'
 
+
+
 def oss_gadget_analyze(package_name):
-    print(Back.GREEN + "[*] Analyzing " + package_name)
+    """"""
+    print(Back.GREEN + "[*] Downloading " + package_name)
     package_dir = package_name
 
     if package_name[0] == '@':
@@ -24,30 +27,39 @@ def oss_gadget_analyze(package_name):
             package_name = package_name.replace('/', "%2F")
 
     if quiet:
-            out = run([OSS_gadget_dir + 'oss-defog', '--download-directory', '.' + dir_separator + 'npm_packages/' + package_dir, '--use-cache', 'pkg:npm/' + package_name, '--save-found-binaries-to', '.', dir_separator, 'potentially_malicious'], stdout=PIPE, stderr=DEVNULL).stdout.splitlines()
+        try:
+            out = run([OSS_gadget_dir + 'oss-download', '--download-directory', '.' + dir_separator + 'npm_packages' + dir_separator + package_dir, '--extract', 'pkg:npm/' + package_name], stdout=PIPE, stderr=DEVNULL, timeout=60).stdout.splitlines()
             for i in out:
                 print(i.decode())
+        except TimeoutExpired:
+            print(Back.RED + "[!] Process for " + package_name + " timeout'd!")
     else:
-            run([OSS_gadget_dir + 'oss-defog', '--download-directory', '.' + dir_separator + 'npm_packages/' + package_dir, '--use-cache', 'pkg:npm/' + package_name, '--save-found-binaries-to', '.', dir_separator, 'potentially_malicious'])
+            run([OSS_gadget_dir + 'oss-defog', '--download-directory', '.' + dir_separator + 'npm_packages' + dir_separator + package_dir, '--use-cache', 'pkg:npm/' + package_name])
 
-def get_new_package_names():
+
+def get_new_package_names() -> list:
     npm_package_names = []
     k = 1
     while(k < 2):
-        res = requests.get('https://libraries.io/search?order=desc&platforms=npm&sort=created_at&page='+str(k))
-        soup = bs4.BeautifulSoup(res.text, 'html.parser')
-        i = 4 # Based on the set up of the webpage, this is the first package in the list
-        while(i < 2):
-            css_selector = 'body > div.container > div.row > div.col-sm-8 > div:nth-child('+str(i)+') > h5 > a'
-            more_soup = soup.select(css_selector)[0]
-            soup_content = more_soup.contents[0]
-            # soup_urls = more_soup.attrs['href'] in case we want the links to the packages
-            npm_package_names.append(soup_content)
-            i += 1
-        k += 1
+        try:
+            res = requests.get('https://libraries.io/search?order=desc&platforms=npm&sort=created_at&page='+str(k))
+            soup = bs4.BeautifulSoup(res.text, 'html.parser')
+            i = 4 # Based on the set up of the webpage, this is the first package in the list
+            while(i < 2):
+                css_selector = 'body > div.container > div.row > div.col-sm-8 > div:nth-child('+str(i)+') > h5 > a'
+                more_soup = soup.select(css_selector)[0]
+                soup_content = more_soup.contents[0]
+                # soup_urls = more_soup.attrs['href'] in case we want the links to the packages
+                npm_package_names.append(soup_content)
+                i += 1
+            k += 1
+        except ConnectionError:
+            print(Back.RED + "[!!] Connection Lost")
     return npm_package_names
 
 def get_new_package_names_mode2():
+    package_count = 0
+
     k = 1
     while(k < 100):
         res = requests.get('https://libraries.io/search?order=desc&platforms=npm&sort=created_at&page='+str(k))
@@ -60,11 +72,11 @@ def get_new_package_names_mode2():
             # soup_urls = more_soup.attrs['href'] in case we want the links to the packages
             if package:
                 oss_gadget_analyze(package)
-                #extract_packages()
-                #check_yara_rules_for_each()
-                #clean_up()
+                package_count += 1
             i += 1
         k += 1
+
+    return package_count
 
 def download_packages(package_names):
     for package in package_names:
@@ -101,24 +113,30 @@ def create_card(package_name, filename, yara_matches):
     my_teams_message.text(f"The {filename} file in the {package_name} package triggered {yara_matches} yara rules.")
     my_teams_message.send()
 
-def load_yara_rules():
+def load_yara_rules(directory) -> dict:
     yara_rules_dict = {}
-    for (dirpath, dirname, filenames) in os.walk(current_working_directory + dir_separator + 'yara_rules'):
+    yar_directory = directory
+
+    for (dirpath, dirname, filenames) in os.walk(yar_directory):
         if filenames:
             for filename in filenames:
-                with open(current_working_directory + dir_separator + 'yara_rules' + dir_separator + filename, 'r') as yars:
+                with open(directory + dir_separator + filename, 'r') as yars:
                     yara_rules_dict[filename] = yars.read()
 
     return yara_rules_dict
 
 def check_yara_rules():
+
     for (dirpath, dirname, filenames) in os.walk(current_working_directory + dir_separator + 'extracted_packages'):
         if filenames:
             for filename in filenames:
                 yara_matches = yara_rules_compiled.match(dirpath + dir_separator + filename) 
+                print(Back.BLUE + "[!] Analyzing " + filename + " with YARA!")
                 if yara_matches:
+                    print("[!!] YARA MATCH FOR " + filename)
                     package_name = dirpath.split(dir_separator)[7]
-                    # create_card(package_name, filename, yara_matches)
+                    create_card(package_name, filename, yara_matches)
+
                     try:
                         shutil.move(dirpath + dir_separator + filename, current_working_directory + dir_separator + 'potentially_malicious' + dir_separator + package_name + dir_separator + filename)
                     except:
@@ -127,29 +145,41 @@ def check_yara_rules():
 
 def check_yara_rules_for_each():
     # TODO: fix permissions error
-    for (dirpath, dirname, filenames) in os.walk(current_working_directory + dir_separator + 'extracted_packages'):
+    triggered_YARA = 0
+    for (dirpath, dirname, filenames) in os.walk(current_working_directory + dir_separator + 'npm_packages'):
         if filenames:
             for filename in filenames:
                 try:
+                    print(Back.BLUE + "[!] Analyzing " + dirpath + filename + " with YARA!")
                     yara_matches = yara_rules_compiled.match(dirpath + dir_separator + filename)
                     package_name = dirpath.split(dir_separator)[7]
-                    new_dir = dirpath + dir_separator + filename, current_working_directory + dir_separator + 'potentially_malicious' + dir_separator + package_name + dir_separator + filename 
+                    new_folder = current_working_directory + dir_separator + 'potentially_malicious' + dir_separator + package_name + dir_separator
+                    new_dir = current_working_directory + dir_separator + 'potentially_malicious' + dir_separator + package_name + dir_separator + filename
                     if yara_matches:
-                        positive_alert(new_dir, package_name)
+                        print(Back.RED + "[!!] YARA MATCH FOR " + filename)
+                        create_card(package_name, filename, yara_matches)
+                        positive_alert(new_dir, dirpath + dir_separator + filename, new_folder)
+                        triggered_YARA += 1
                 except yara.Error:
                     print("[!] Permissions error! Not even bothering.")
                     # os.chmod(dirpath + dir_separator + filename, stat.S_IRWXU)
                     # if yara_matches:
                     #    positive_alert(new_dir, package_name)
 
-def positive_alert(dir, name):
-    print("Something funny!")
-    # create_card(package_name, filename, yara_matches)
+    return triggered_YARA
+
+def positive_alert(dir, name, folder):
+
     try:
-        shutil.move(dir)
-    except:
-        os.mkdir(current_working_directory + dir_separator + 'potentially_malicious' + dir_separator + name)
-        shutil.move(dir)
+        shutil.copy(name, dir)
+
+    except FileNotFoundError:
+
+        os.mkdir(folder)
+        shutil.copy(name, dir)
+
+    
+
 
 def clean_up():
     for (dirpath, dirname, filenames) in os.walk(current_working_directory + dir_separator + 'npm_packages'):
@@ -159,7 +189,7 @@ def clean_up():
         if dirpath != current_working_directory + dir_separator + 'extracted_packages':
             shutil.rmtree(dirpath)
 
-def check_OS(sys_platform):
+def check_OS(sys_platform) -> str:
     separator = '\\'
     if sys_platform.startswith('linux') or sys_platform == 'darwin':
         separator = '/'
@@ -168,9 +198,13 @@ def check_OS(sys_platform):
     return separator
 
 
-def main():
+def main(switch=2):
     if switch == 2:
-        get_new_package_names_mode2()
+        package_count = get_new_package_names_mode2()
+        YARA_triggers = check_yara_rules_for_each()
+
+        print("\n\nDownloaded packages: " + str(package_count))
+        print("YARA triggers: " + str(YARA_triggers))
     else:
         #package_names = get_new_package_names()
         # download_packages(package_names)
@@ -180,20 +214,37 @@ def main():
 
     
 
-if __name__ == '__main__':
     
+
+if __name__ == '__main__':
+    pars = argparse.ArgumentParser(prog='NPM Web Scraper', usage='python .\\npm_web_scrapper.py --oss --yars *yara rules directory*', description='libraries.io scrapper with OSSGadget and YARA integration.')
+    pars.add_argument('--npm', action='store_true')
+    pars.add_argument('--oss', action='store_true')
+    pars.add_argument('--yars', action='store', type=str)
+    args = pars.parse_args()
+
     current_working_directory = os.getcwd()
     dir_separator = check_OS(sys.platform)
     colorama.init(autoreset=True)
-    yara_rules = load_yara_rules()
-    yara_rules_compiled = yara.compile(sources=yara_rules) # load YARA rules for compiling
-    OSS_gadget_dir = '..' + dir_separator + 'OSSGadget' + dir_separator
-    switch = 2
     quiet = True
 
-    print("\n\nLoaded YARA rules:")
-    for y, r in yara_rules.items():
-        print(y)
-    print()
+    if args.yars:
+        yara_rules = load_yara_rules(args.yars)
 
-    main()
+        print("\n\nLoaded YARA rules:")
+        for y, r in yara_rules.items():
+            print(y)
+        print()
+
+        yara_rules_compiled = yara.compile(sources=yara_rules) # load YARA rules for compiling
+    else:
+        print("No YARA rules loaded.")
+        sys.exit(0)
+
+    if args.npm:
+        main(1)
+    elif args.oss:
+        OSS_gadget_dir = '..' + dir_separator + 'OSSGadget' + dir_separator
+        main(2)
+    else:
+        print("Please choose --oss OR --npm")
