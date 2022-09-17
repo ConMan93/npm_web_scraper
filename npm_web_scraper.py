@@ -1,7 +1,6 @@
 # Author: Connor Hoffman 001345531 & Gerardo Monterroza
 
-from pydoc import describe
-from subprocess import DEVNULL, PIPE, STDOUT, CalledProcessError, TimeoutExpired, run
+from subprocess import DEVNULL, PIPE, STDOUT, CalledProcessError, TimeoutExpired, run, Popen
 from colorama import Fore, Back
 import pymsteams
 import colorama
@@ -32,6 +31,22 @@ def oss_gadget_analyze(package_name, quiet):
             print(Back.RED + "[!] Process for " + package_name + " timeout'd!")
     else:
             run([OSS_gadget_dir + 'oss-defog', '--download-directory', '.' + dir_separator + 'npm_packages' + dir_separator + package_dir, '--use-cache', 'pkg:npm/' + package_name])
+
+def fetch_from_NPM_registry(dir_to_script='scrapper.js') -> int:
+    """ Runs javascript file to fetch from NPM registry. """
+    package_count = 0
+
+    try:
+        out = Popen(['node', '.' + dir_separator + dir_to_script], stdout=PIPE)
+        for package in iter(out.stdout.readline, ''):
+            if package == 0:
+                return package_count
+            oss_gadget_analyze(package.decode().strip(), quiet=True)
+            package_count += 1
+        out.wait()
+    except KeyboardInterrupt:
+        print("\n\nExiting..\n")
+        return package_count
 
 
 def get_new_package_names_list() -> list:
@@ -130,7 +145,7 @@ def create_card(package_name, filename, yara_matches):
         my_teams_message.text(f"The {filename} file in the {package_name} package triggered {yara_matches} yara rules.")
         my_teams_message.send()
     else:
-        print("No valid webhook provided.")
+        pass
 
 def load_yara_rules(directory) -> dict:
     """ Loads YARA rules from directory and creates/return dictionary. """
@@ -206,6 +221,7 @@ if __name__ == '__main__':
     Modify WEB_HOOKURL for Microsoft Teams alerts.
     """)
     pars.add_argument('--oss', required=False, action='store', type=str, help="Runs in OSSGadget mode. Provide directory to binaries. ex. '../OSSGadget/")
+    pars.add_argument('--pub', required=False, action='store', type=str, help="Runs JS script that fetchs data from public NPM registry. Provide directory to script. ex. '../scrapper.js")
     pars.add_argument('--npm', required=False, action='store_true', help="Runs in NPM mode. Requires present NPM install.")
     pars.add_argument('--list', required=False, action='store_true')
     pars.add_argument('--yars', required=False, action='store', type=str, help="Directory to yara rules.")
@@ -251,8 +267,15 @@ if __name__ == '__main__':
                 print("[!!] Could not run NPM. Please verify installation.")
 
         if args.oss:
-            OSS_gadget_dir = '..' + dir_separator + 'OSSGadget' + dir_separator
+            OSS_gadget_dir = '.' + dir_separator + 'OSSGadget' + dir_separator
             package_count = get_new_package_names(mode='OSS', quiet=quiet)
+
+        if args.pub:
+            OSS_gadget_dir = '.' + dir_separator + 'OSSGadget' + dir_separator
+            js_script_dir = args.pub
+            package_count = fetch_from_NPM_registry()
+
+
 
         if yara_rules:
             YARA_triggers = check_yara_rules()
