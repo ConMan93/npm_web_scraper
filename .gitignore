@@ -1,3 +1,5 @@
+__pycache__/
 npm_packages/
 potentially_malicious/
-.vscode/
+pyrightconfig.json
+oss-gadget.log
